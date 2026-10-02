@@ -13,10 +13,9 @@ if [ ! -d "$HADOOP_HOME" ]; then
     wget "https://dlcdn.apache.org/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz" -O /tmp/hadoop.tar.gz
     sudo tar -xzf /tmp/hadoop.tar.gz -C /opt
     sudo mv "/opt/hadoop-${HADOOP_VERSION}" "$HADOOP_HOME"
-    sudo chown -R team:team "$HADOOP_HOME"
     rm /tmp/hadoop.tar.gz
 fi
-
+sudo chown -R hadoop:hadoop "$HADOOP_HOME"
 sudo tee /etc/profile.d/hadoop.sh > /dev/null <<EOF
 export JAVA_HOME=$JAVA_HOME
 export HADOOP_HOME=$HADOOP_HOME
