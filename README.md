@@ -21,11 +21,8 @@ hdfs-cluster/
 
 
 
-## Запуск на виртуальной машине
-
+## Запуск 
 ```bash
-cd hdfs-cluster
-chmod +x *.sh
 ./deploy.sh
 ```
 
