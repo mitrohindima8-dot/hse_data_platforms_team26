@@ -58,7 +58,9 @@ cat "$MAPRED_CONF"
 
 echo
 echo "== Starting JobHistoryServer =="
-"$HADOOP_HOME/bin/mapred" --daemon start historyserver
+if ! jps | grep -q JobHistoryServer; then
+  "$HADOOP_HOME/bin/mapred" --daemon start historyserver
+fi
 sleep 2
 
 if command -v jps >/dev/null 2>&1; then
