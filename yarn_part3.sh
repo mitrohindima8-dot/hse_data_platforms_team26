@@ -28,7 +28,7 @@ if [[ ! -f "$EXAMPLES_JAR" ]]; then
   exit 1
 fi
 
-# Keep a dated backup without overwriting any previous backup.
+
 if [[ -f "$MAPRED_CONF" ]]; then
   BACKUP="${MAPRED_CONF}.backup.$(date +%Y%m%d-%H%M%S)"
   cp -p "$MAPRED_CONF" "$BACKUP"
@@ -84,6 +84,5 @@ echo "== Final HistoryServer check =="
 curl -sS -L --max-time 15 "$HISTORY_URL" | grep -Eo 'job_[0-9]+_[0-9]+' | sort -u | tail -n 10 || true
 
 echo
-echo "Finished. Open the HistoryServer through an SSH tunnel:"
+echo "Finished"
 echo "http://localhost:19888/jobhistory"
-echo "Remember: the SSH tunnel is created separately on your Windows computer."
