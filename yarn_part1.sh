@@ -41,7 +41,9 @@ if ! grep -q "<name>yarn.resourcemanager.webapp.address</name>" "$YARN_CONFIG"; 
     </property>' "$YARN_CONFIG"
 fi
 
-"$HADOOP_HOME/bin/yarn" --daemon start resourcemanager
+if ! jps | grep -q ResourceManager; then
+    "$HADOOP_HOME/bin/yarn" --daemon start resourcemanager
+fi
 
 sleep 5
 
