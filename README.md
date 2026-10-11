@@ -24,3 +24,33 @@
 
 ```bash
 ssh team@111.88.129.35
+```
+
+Перейти в репозиторий:
+
+```bash
+cd ~/hse_data_platforms_team26
+```
+
+Запустить:
+
+```bash
+./deploy.sh
+```
+
+Скрипт последовательно запускает ResourceManager, NodeManager и JobHistoryServer, выполняет тестовую MapReduce-задачу и проверяет состояние HDFS и YARN.
+
+## Проверка
+
+После успешного запуска:
+
+- `hdfs dfsadmin -report` показывает 3 Live DataNode
+- `yarn node -list` показывает 3 NodeManager в состоянии `RUNNING`
+- тестовая MapReduce-задача завершается успешно
+- NameNode UI доступен через порт `9870`
+
+При успешном завершении `deploy.sh` выводит:
+
+```text
+Кластер развернут
+```
