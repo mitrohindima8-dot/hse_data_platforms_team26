@@ -40,6 +40,16 @@ ENV
 
 sudo chmod 755 "${SPARK_HOME}/conf/spark-env.sh"
 
+#адрес resourcemanager на en
+YARN_CONFIG="${HADOOP_CONF_DIR}/yarn-site.xml"
+if ! grep -q "<name>yarn.resourcemanager.hostname</name>" "${YARN_CONFIG}"; then
+    sudo -u hadoop sed -i "/<\/configuration>/i\\
+    <property>\\
+        <name>yarn.resourcemanager.hostname</name>\\
+        <value>team-26-nn</value>\\
+    </property>" "${YARN_CONFIG}"
+fi
+
 "${SPARK_HOME}/bin/spark-submit" --version
 
 echo "Spark ${SPARK_VERSION} installed successfully"
