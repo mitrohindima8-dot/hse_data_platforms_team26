@@ -1,125 +1,114 @@
+# ДЗ 4. Apache Spark под управлением YARN
 
-# Apache Hive — установка и настройка
+Spark-приложение запускается под YARN на кластере из прошлых заданий, читает данные из HDFS, преобразует их и сохраняет в партиционированную таблицу, которую читает Hive.
 
-## 1. Назначение скрипта
+## Что нужно до запуска
 
-`install_hive.sh` автоматически устанавливает и настраивает Apache Hive на подготовленном сервере Ubuntu 24.04.
+- ДЗ 1: HDFS (NameNode на team-26-nn, 3 DataNode)
+- ДЗ 2: YARN (ResourceManager на team-26-nn, 3 NodeManager)
+- ДЗ 3: Hive 4.0.0-alpha2 на team-26-en (Metastore на PostgreSQL, HiveServer2 на 10.26.0.10:10000)
 
-Скрипт подготавливает PostgreSQL для хранения метаданных, устанавливает Hive при необходимости, настраивает подключение к Hadoop и HDFS, создаёт службы Hive Metastore и HiveServer2 и проверяет работоспособность системы.
+## Состав кластера
 
-## 2. Основные компоненты и пути
+| Нода | Что запущено |
+|------|--------------|
+| team-26-en | edge, Spark 3.5.7, Hive Metastore, HiveServer2, PostgreSQL |
+| team-26-nn | NameNode, DataNode, ResourceManager, NodeManager, JobHistoryServer |
+| team-26-00 | Secondary NameNode, DataNode, NodeManager |
+| team-26-01 | DataNode, NodeManager |
 
-| Компонент | Параметр |
-|---|---|
-| Java | 17 |
-| Hadoop | `/opt/hadoop` |
-| Hive | `/opt/hive` |
-| Конфигурация Hive | `/opt/hive/conf/hive-site.xml` |
-| Конфигурация Hadoop | `/opt/hadoop/etc/hadoop` |
-| База метаданных | `hive_metastore` |
-| Пользователь PostgreSQL | `hive` |
-| Каталог данных Hive в HDFS | `/user/hive/warehouse` |
+Spark стоит только на en. Драйвер работает на en (режим client), executor запускаются в контейнерах YARN на nn, 00, 01.
 
-## 3. Что делает скрипт
+## Скрипты
 
-1. Проверяет окружение, наличие Java, Hadoop, необходимых команд и системного пользователя `hadoop`.
-2. Устанавливает необходимые пакеты и запускает PostgreSQL.
-3. Создаёт пользователя и базу `hive_metastore` для хранения метаданных Hive.
-4. При необходимости скачивает и устанавливает Hive, добавляет JDBC-драйвер PostgreSQL.
-5. Создаёт `hive-site.xml` с настройками подключения к PostgreSQL, Metastore, HDFS и HiveServer2.
-6. Создаёт каталог `/user/hive/warehouse` в HDFS и настраивает права доступа.
-7. Проверяет состояние схемы Metastore и инициализирует её, если база пустая.
-8. Создаёт и запускает службы `hive-metastore` и `hive-server2`.
-9. Проверяет доступность портов, состояние схемы и выполнение тестового SQL-запроса через Beeline.
+| Файл | Что делает |
+|------|------------|
+| `install_spark.sh` | скачивает Spark 3.5.7 в `/opt/spark`, пишет `spark-env.sh` (JAVA_HOME, HADOOP_CONF_DIR, YARN_CONF_DIR), прописывает на en адрес ResourceManager |
+| `run_spark.sh` | проверяет, что YARN доступен, и запускает SparkPi под YARN. Можно передать свое приложение: `bash run_spark.sh /tmp/app.py` |
+| `test_spark_hdfs.sh`, `test_spark_hdfs.py` | кладут тестовый файл в HDFS и проверяют, что Spark его читает |
+| `hw4_load_data.sh` | генерирует CSV с продажами квартир (5000 строк, 5 городов, январь-сентябрь 2026, есть битые строки) и кладет в HDFS `/user/hadoop/hw4/input/apartments.csv` |
+| `hw4_spark_job.py` | Spark-приложение: чтение из HDFS, трансформации, запись таблицы `hw4.apartments_stats` с партициями |
+| `hw4_run.sh` | запускает `hw4_spark_job.py` через `spark-submit --master yarn` |
+| `hw4_check.sh` | читает таблицу через beeline (клиент Hive) и сверяет ее с исходным CSV |
 
-## 4. HiveServer2 и подключение клиентов
+`install_hive.sh`, `two_clients.sh`, `sql_table_check.sh` остались из ДЗ 3, они нужны, чтобы работал Hive.
 
-HiveServer2 принимает клиентские подключения через JDBC.
+## Запуск
 
-- Адрес: `10.26.0.10`
-- Порт: `10000`
-- JDBC URL: `jdbc:hive2://10.26.0.10:10000/default`
-- Аутентификация: `NONE`
-
-Metastore использует порт `9083` и адрес `thrift://localhost:9083`.
-
-Для многопользовательского тестирования необходимо отдельно проверить подключения из нескольких клиентских сессий и выполнение SQL-запросов одновременно. Успешный тестовый запрос из одной сессии сам по себе не подтверждает полноценную многопользовательскую работу.
-
-**Важно:** аутентификация `NONE` не обеспечивает проверку личности клиента. Доступ к порту `10000` следует ограничивать сетевыми правилами.
-
-## 5. Интеграция с Hadoop, HDFS и Spark
-
-Hive использует существующую конфигурацию Hadoop и хранит данные таблиц в HDFS. Основной каталог хранения — `/user/hive/warehouse`.
-
-Для интеграции Spark необходимо использовать совместимые конфигурации Hadoop и YARN, обеспечить доступ приложения к входным данным HDFS и настроить подключение к Hive Metastore через `hive-site.xml`.
-
-Результаты Spark-приложения можно записывать в HDFS с партиционированием и регистрировать как таблицы Hive. После этого следует проверить чтение данных через Hive и корректность партиций.
-
-Скрипт установки Hive не устанавливает и не настраивает Spark, не запускает Spark-приложения под YARN и не реализует преобразования данных — эти задачи выполняются отдельно.
-
-## 6. Службы и проверка
-
-Создаются две службы systemd:
-
-- `hive-metastore.service`
-- `hive-server2.service`
-
-Проверить их состояние можно командами:
+Все скрипты запускаются на en от пользователя team.
 
 ```bash
-sudo systemctl status hive-metastore
-sudo systemctl status hive-server2
+ssh team@111.88.129.35
+git clone -b HW-4-spark https://github.com/mitrohindima8-dot/hse_data_platforms_team26.git hw4_repo
+cd hw4_repo
 ```
 
-Проверить доступность портов:
+Установка Spark и проверка, что он работает под YARN и видит HDFS:
 
 ```bash
-sudo ss -lntp | grep -E ':9083|:10000'
+bash install_spark.sh
+bash run_spark.sh
+bash test_spark_hdfs.sh
 ```
 
-Подключиться к Hive и выполнить тестовый запрос:
+Обработка данных и таблица в Hive:
 
 ```bash
-/opt/hive/bin/beeline \
-  -u 'jdbc:hive2://10.26.0.10:10000/default' \
-  -e 'SHOW DATABASES'
+bash hw4_load_data.sh
+bash hw4_run.sh
+bash hw4_check.sh
 ```
 
-Для общей проверки задания также необходимо протестировать создание таблицы, запись и чтение данных, одновременные клиентские сессии и доступность созданных Spark-таблиц через Hive.
+## Что делает Spark-приложение
 
-## 7. Проверка нескольких клиентов
+1. Создает сессию Spark с поддержкой Hive (`enableHiveSupport`, metastore `thrift://localhost:9083`). Master `yarn` задается в `hw4_run.sh`.
+2. Читает CSV из HDFS: `hdfs:///user/hadoop/hw4/input/apartments.csv`.
+3. Трансформации:
+   - приведение типов: id, rooms в int, area в double, price в long, sale_date в date
+   - очистка: убираются строки без цены и с площадью <= 0
+   - новые колонки: цена за м2 (`price_per_m2`) и месяц продажи (`month`)
+   - агрегация по месяцу, городу и числу комнат: число сделок, средняя цена, средняя цена за м2, мин и макс цена
+4. Сохраняет результат как таблицу Hive `hw4.apartments_stats` в формате parquet с партициями по месяцу (`partitionBy("month")`). Данные лежат в HDFS `/user/hadoop/hw4/apartments_stats`.
 
-`two_clients.sh` параллельно запускает два клиента Beeline. Каждый подключается к HiveServer2, выполняет `SHOW DATABASES` и `SELECT` со значением `client_1` или `client_2`.
+## Соответствие заданию
 
-Запуск на `team-26-en` из каталога репозитория:
+| Пункт | Где сделано |
+|-------|-------------|
+| 1. Сессия Spark под управлением YARN | `hw4_run.sh`, `run_spark.sh`: `--master yarn` |
+| 2. Подключение к HDFS | `HADOOP_CONF_DIR` в spark-env.sh, чтение `hdfs:///...` |
+| 3. Чтение данных, загруженных на HDFS | `hw4_load_data.sh` кладет CSV, `hw4_spark_job.py` читает |
+| 4. Несколько трансформаций | приведение типов, фильтрация, новые колонки, агрегация |
+| 5. Партиционирование при сохранении | `partitionBy("month")` |
+| 6. Сохранение как таблицы | `saveAsTable("hw4.apartments_stats")` |
+| 7. Чтение стандартным клиентом Hive | `hw4_check.sh` через beeline |
+
+## Проверка
+
+`hw4_check.sh` читает таблицу через beeline, выгружает ее и сравнивает с исходным CSV: число сделок и средняя цена в каждой группе, число групп, число партиций.
+
+Вручную:
 
 ```bash
-bash two_clients.sh
+sudo -u hadoop /opt/hive/bin/beeline -u jdbc:hive2://10.26.0.10:10000/default -n hadoop -e "SHOW PARTITIONS hw4.apartments_stats; SELECT * FROM hw4.apartments_stats WHERE month='2026-03' LIMIT 10;"
 ```
 
-Скрипт автоматически переключается с `team` на `hadoop` и ожидает завершения обоих клиентов.
-
-## 8. Загрузка данных в партиционированную таблицу
-
-`sql_table_check.sh` создаёт два CSV-файла, базу `hw3_part2` и внешнюю таблицу `hw3_part2.apartments`.
-
-| Параметр | Значение |
-|---|---|
-| Столбцы | `apartment_id INT`, `city STRING`, `price INT` |
-| Ключ партиционирования | `dt STRING` |
-| Каталог в HDFS | `/user/hadoop/hw3_part2/apartments` |
-| Формат | `TEXTFILE`, разделитель — запятая |
-
-Запуск после установки Hive и запуска служб:
+Задача в YARN:
 
 ```bash
-bash sql_table_check.sh
+sudo -u hadoop /opt/hadoop/bin/yarn application -list -appStates FINISHED
 ```
 
-Данные загружаются через `LOAD DATA LOCAL INPATH` в две явно заданные партиции:
+## Результат
 
-- `dt=2026-10-01` — 3 строки;
-- `dt=2026-10-02` — 2 строки.
+- `run_spark.sh`: `Pi is roughly 3.14...`
+- `test_spark_hdfs.sh`: `Spark HDFS test PASSED`
+- `hw4_run.sh`: задача `hw4_apartments` в YARN со статусом SUCCEEDED, из 5000 строк после очистки 4940
+- таблица `hw4.apartments_stats`: 9 партиций, `month=2026-01` ... `month=2026-09`, 180 строк
+- `hw4_check.sh`: `Проверка пройдена: hive читает таблицу, данные и партиции совпадают`
 
-При повторном запуске содержимое двух партиций заменяется через `OVERWRITE`, строки не дублируются, поскольку тестовый пример.
+## Замечания
 
+- на en в `yarn-site.xml` не было адреса ResourceManager, и Spark стучался в 0.0.0.0:8032. Теперь `install_spark.sh` прописывает `yarn.resourcemanager.hostname=team-26-nn`
+- на en в /etc/hosts есть строка 127.0.1.1 team-26-en, поэтому драйверу явно задан адрес 10.26.0.10 (`spark.driver.host`), иначе контейнеры на нодах не могут к нему подключиться
+- `run_spark.sh` переключается на пользователя hadoop: у team нет прав на запись в HDFS `/user`
+- запросы с GROUP BY в Hive сейчас падают (MapReduce в Hive 4 на Java 17), поэтому агрегаты считаются в Spark, а Hive проверяется чтением таблицы
