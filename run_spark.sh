@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+#запуск от hadoop
+if [ "$(id -un)" != "hadoop" ]; then
+    exec sudo -H -u hadoop bash -s -- "$@" < "$0"
+fi
+cd /tmp
+
 export SPARK_HOME=/opt/spark
 export HADOOP_HOME=/opt/hadoop
 export HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop
@@ -23,6 +29,8 @@ if [ "$#" -eq 0 ]; then
     "${SPARK_HOME}/bin/spark-submit" \
         --master yarn \
         --deploy-mode client \
+        --conf spark.driver.host=10.26.0.10 \
+        --conf spark.driver.bindAddress=10.26.0.10 \
         --class org.apache.spark.examples.SparkPi \
         "${APP}" 10
 else
@@ -30,5 +38,7 @@ else
     "${SPARK_HOME}/bin/spark-submit" \
         --master yarn \
         --deploy-mode client \
+        --conf spark.driver.host=10.26.0.10 \
+        --conf spark.driver.bindAddress=10.26.0.10 \
         "${APP}" "$@"
 fi
