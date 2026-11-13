@@ -10,4 +10,5 @@
 | ДЗ 2: развертывание YARN и публикация веб-интерфейсов | [HW-2](https://github.com/mitrohindima8-dot/hse_data_platforms_team26/tree/HW-2) |
 | ДЗ 3: развертывание Apache Hive | [HW-3](https://github.com/mitrohindima8-dot/hse_data_platforms_team26/tree/HW-3) |
 | ДЗ 4: Apache Spark под управлением YARN, таблица в Hive | [HW-4-spark](https://github.com/mitrohindima8-dot/hse_data_platforms_team26/tree/HW-4-spark) |
+| ДЗ 5: Процесс обработки данных | [HW-3](https://github.com/mitrohindima8-dot/hse_data_platforms_team26/tree/HW-5) |
 Инструкция по запуску и проверке лежит в README внутри каждой ветки.
