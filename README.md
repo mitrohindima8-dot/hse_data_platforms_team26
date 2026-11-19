@@ -13,11 +13,21 @@ check-hive -> check-input -> prepare-hdfs -> spark-etl (YARN) -> register-hive-t
 | `check-hive` | `SHOW DATABASES` через HiveServer2 (`10.26.0.10:10000`) | 2, пауза 10 с |
 | `check-input` | входной файл есть в HDFS | нет (отсутствие файла не временный сбой) |
 | `prepare-hdfs` | `mkdir -p` для выходного каталога и каталогов warehouse в `/user/team` | 1 |
-| `spark-etl` | `spark-submit` на YARN: чтение CSV, приведение типов, очистка, агрегация, запись Parquet | 2, паузы 30 и 120 с |
-| `register-hive-table` | создаёт БД и внешнюю таблицу Hive поверх Parquet | 2, пауза 15 с |
-| `verify-table` | `SELECT * ... LIMIT 5` через Hive, проверка, что таблица не пуста | 1 |
+| `spark-etl` | `spark-submit` на YARN: чтение CSV, приведение типов, обработка пропусков, очистка, агрегация, запись Parquet с партициями по `month` | 2, паузы 30 и 120 с |
+| `register-hive-table` | создаёт БД и внешнюю партиционированную таблицу Hive поверх Parquet, `MSCK REPAIR` подхватывает партиции | 2, пауза 15 с |
+| `verify-table` | `SHOW PARTITIONS` и `SELECT * ... LIMIT 5` через Hive, проверка, что партиции есть и таблица не пуста | 1 |
 
-**Трансформации (`spark_etl.py`):** приведение типов (`id`, `rooms`, `area`, `price`, `sale_date`), удаление строк с null и неположительными значениями, дедупликация по `id`, расчёт цены за м² и месяца, агрегация по `city, rooms, month` (число сделок, средняя цена, средняя цена за м², min, max). Результат пишется в Parquet с режимом `overwrite`, поэтому повторный запуск идемпотентен.
+**Трансформации (`spark_etl.py`):**
+
+- приведение типов: `id`, `rooms`, `area`, `price`, `sale_date`
+- обработка пропусков: число пустых значений по каждой колонке пишется в лог, пустой `city` заменяется на `unknown`, строки без `price`, `area`, `rooms` или `sale_date` убираются
+- очистка: только положительные `area`, `price`, `rooms`, дедупликация по `id`
+- новые колонки: цена за м² и месяц продажи
+- агрегация по `city, rooms, month`: число сделок, средняя цена, средняя цена за м², min, max
+
+Результат пишется в Parquet с партициями по `month` (`partitionBy("month")`, одна папка `month=YYYY-MM` на месяц) в режиме `overwrite`, поэтому повторный запуск идемпотентен.
+
+На тестовых данных из ДЗ 4: прочитано 5000 строк, пропусков в `price` 50, после очистки 4940, в агрегате 180 строк, 9 партиций `month=2026-01` ... `month=2026-09`.
 
 
 ## Что создаётся
@@ -30,8 +40,8 @@ check-hive -> check-input -> prepare-hdfs -> spark-etl (YARN) -> register-hive-t
 | Данные Prefect (SQLite) | `/home/team/.prefect` |
 | systemd: Prefect Server | `prefect-server-team.service` (`127.0.0.1:4200`) |
 | systemd: runner с deployment | `prefect-flow-team.service` (deployment `apartments-etl`) |
-| HDFS | `/user/team` (владелец `team`), `/user/team/team_prefect/apartments_stats` (Parquet), `/user/team/warehouse/{ext,managed}` |
-| Hive | БД `team_prefect`, внешняя таблица `team_prefect.apartments_stats` |
+| HDFS | `/user/team` (владелец `team`), `/user/team/team_prefect/apartments_stats` (Parquet, партиции `month=YYYY-MM`), `/user/team/warehouse/{ext,managed}` |
+| Hive | БД `team_prefect`, внешняя таблица `team_prefect.apartments_stats`, партиционирована по `month` |
 
 
 ## Режимы

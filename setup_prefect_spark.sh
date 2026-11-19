@@ -125,7 +125,7 @@ write_app_files() {
 
   # ---------------- spark_etl.py ----------------
   cat > "${APP_DIR}/spark_etl.py" <<'PY'
-"""Spark-задача: CSV из HDFS -> приведение типов -> агрегация -> Parquet в HDFS."""
+"""Spark-задача: CSV из HDFS -> типы, пропуски, агрегация -> Parquet с партициями по month."""
 import argparse
 import json
 
@@ -160,14 +160,15 @@ def main():
         ).cache()
         rows_in = typed.count()
 
-        # 2) Очистка: нет null, положительные значения, без дублей по id
+        # 2) Пропуски: считаем по колонкам, пустой город -> unknown,
+        #    без цены, площади или даты строку не восстановить, убираем
+        nulls = typed.select(
+            [F.sum(F.col(c).isNull().cast("int")).alias(c) for c in typed.columns]
+        ).first().asDict()
         clean = (
-            typed.where(
-                F.col("id").isNotNull() & F.col("city").isNotNull()
-                & F.col("rooms").isNotNull() & F.col("area").isNotNull()
-                & F.col("price").isNotNull() & F.col("sale_date").isNotNull()
-                & (F.col("area") > 0) & (F.col("price") > 0) & (F.col("rooms") > 0)
-            )
+            typed.fillna({"city": "unknown"})
+            .dropna(subset=["id", "rooms", "area", "price", "sale_date"])
+            .where((F.col("area") > 0) & (F.col("price") > 0) & (F.col("rooms") > 0))
             .dropDuplicates(["id"])
         )
 
@@ -190,14 +191,14 @@ def main():
             )
             .select("city", "rooms", "month", "deals", "avg_price",
                     "avg_price_per_m2", "min_price", "max_price")
-            .orderBy("month", "city", "rooms")
         )
 
-        # 5) Запись (overwrite => повторный запуск идемпотентен)
-        stats.coalesce(1).write.mode("overwrite").parquet(args.output)
+        # 5) Запись Parquet с партициями по месяцу (overwrite => повторный запуск идемпотентен)
+        stats.repartition("month").write.mode("overwrite").partitionBy("month").parquet(args.output)
 
         back = spark.read.parquet(args.output)
         rows_out = back.count()
+        partitions = back.select("month").distinct().count()
         rows_clean = clean.count()
         if rows_out == 0:
             raise RuntimeError("Результат пуст: в Parquet записано 0 строк")
@@ -207,6 +208,8 @@ def main():
             "rows_clean": rows_clean,
             "rows_dropped": rows_in - rows_clean,
             "rows_out": rows_out,
+            "partitions": partitions,
+            "nulls": nulls,
             "schema": back.dtypes,
             "output": args.output,
         }, default=str))
@@ -262,6 +265,8 @@ SPARK_CONF = {
     "spark.yarn.maxAppAttempts": "1",
     "spark.dynamicAllocation.enabled": "false",
     "spark.pyspark.python": "/usr/bin/python3",
+    "spark.driver.host": "10.26.0.10",
+    "spark.driver.bindAddress": "10.26.0.10",
     "spark.sql.shuffle.partitions": "2",
     "spark.sql.catalogImplementation": "in-memory",
     "spark.ui.showConsoleProgress": "false",
@@ -408,8 +413,10 @@ def run_spark_etl(input_path: str, output_path: str):
         raise PipelineError("Spark завершился без строки ETL_RESULT: результат неизвестен")
     if result.get("rows_out", 0) <= 0:
         raise PipelineError(f"Spark записал 0 строк: {result}")
-    logger.info("Spark: прочитано %s, после очистки %s (отброшено %s), строк в агрегате %s",
-                result["rows_in"], result["rows_clean"], result["rows_dropped"], result["rows_out"])
+    logger.info("Spark: прочитано %s, после очистки %s (отброшено %s), строк в агрегате %s, партиций %s",
+                result["rows_in"], result["rows_clean"], result["rows_dropped"], result["rows_out"],
+                result["partitions"])
+    logger.info("Пропуски по колонкам: %s", result["nulls"])
     return result
 
 
@@ -427,9 +434,11 @@ def register_hive_table(output_path: str, hive_db: str, hive_table: str):
     statements.append(f"DROP TABLE IF EXISTS {db}.{table};")
     statements.append(
         f"CREATE EXTERNAL TABLE {db}.{table} ("
-        "city STRING, rooms INT, month STRING, deals BIGINT, avg_price BIGINT, "
+        "city STRING, rooms INT, deals BIGINT, avg_price BIGINT, "
         "avg_price_per_m2 DOUBLE, min_price BIGINT, max_price BIGINT) "
+        "PARTITIONED BY (month STRING) "
         f"STORED AS PARQUET LOCATION '{uri}';")
+    statements.append(f"MSCK REPAIR TABLE {db}.{table};")
     beeline(" ".join(statements), logger, "hive-register")
     logger.info("Таблица %s.%s зарегистрирована поверх %s", db, table, uri)
     return f"{db}.{table}"
@@ -438,6 +447,11 @@ def register_hive_table(output_path: str, hive_db: str, hive_table: str):
 @task(name="verify-table", retries=1, retry_delay_seconds=15)
 def verify_table(full_name: str):
     logger = get_run_logger()
+    parts = [ln for ln in beeline(f"SHOW PARTITIONS {full_name};", logger, "hive-partitions")
+             if ln.startswith("month=")]
+    logger.info("Партиции %s: %s", full_name, ", ".join(parts))
+    if not parts:
+        raise PipelineError(f"У таблицы {full_name} нет партиций")
     out = beeline(f"SELECT * FROM {full_name} LIMIT 5;", logger, "hive-verify")
     rows = [ln for ln in out if "\t" in ln]
     logger.info("Пример строк из %s:\n%s", full_name, "\n".join(out))
