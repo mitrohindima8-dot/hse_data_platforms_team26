@@ -85,20 +85,32 @@ ssh -L 4200:127.0.0.1:4200 team@<адрес-узла>
 
 Можно менять в UI («Run» -> «Custom run») или через CLI: `bash setup_prefect_spark.sh --run --param hive_db=default` (запуск с `--param` не проверялся). Расписание: добавить `Environment=ETL_CRON=0 3 * * *` в `prefect-flow-team.service`, затем `sudo systemctl daemon-reload && sudo systemctl restart prefect-flow-team.service`.
 
-## Заметки (удалите потом пж)
-### Важные
-1. **После любой правки `pipeline.py` перезапускайте runner:** `sudo systemctl restart prefect-flow-team.service`. Без этого deployment продолжает работать на старой версии (так было у нас: `--test` проходил, а запуск через deployment падал). То же после повторного `--install`.
-2. **NodeManager и JDK.** NodeManager на всех трёх узлах работал на удалённом JDK (после автообновления пакета) и не мог запускать контейнеры: `Failed to exec spawn helper` для `bash`. Лечится перезапуском NodeManager на каждом узле, мы это сделали. Автообновление JDK (`unattended-upgrades`) повторит проблему. Решать команде: `apt-mark hold openjdk-17-*` или плановый перезапуск NodeManager после обновлений.
+## Проверка таблицы и данных
 
-### Не очень
-  
-4. **Spark в режиме `client`: адрес драйвера.** Воркеры должны подключаться к драйверу на `team-26-en`. Без явных `spark.driver.host` и `spark.driver.bindAddress` (оба `10.26.0.10`) AM падал с `Connection refused`. Эти параметры уже в `SPARK_CONF` в `pipeline.py`.
-5. **Права в HDFS.** `team` может читать `/user/hadoop/...`, но не писать в `/user/hive/warehouse` и не заходить в `/tmp`. Поэтому результат пишется в `/user/team/`, а БД Hive создаётся с `LOCATION` и `MANAGEDLOCATION` в `/user/team/warehouse/`.
-6. **Hive из Spark не используется.** Spark работает с `in-memory` каталогом (`spark.sql.catalogImplementation=in-memory`), потому что встроенный клиент Hive в Spark 3.5.7 (2.3.9) может быть несовместим с metastore 4.0.0-alpha-2. Таблицу создаёт Beeline через HiveServer2 поверх готового Parquet.
-7. **Не делайте `SELECT COUNT(*)` и другие агрегации через Hive.** Движок Hive здесь `mr`: запрос запустит MapReduce-задачу, которой может не хватить памяти. Для проверки используйте `SELECT * ... LIMIT N` или считайте в Spark.
-8. **Ресурсы YARN.** Узлы по 2048 МБ и 2 vcores, минимальная аллокация 1024 МБ: AM и каждый executor занимают по 1 GiB, всего 3 контейнера из 6 GiB. `maximum-am-resource-percent=0.1`, поэтому **запускайте один flow за раз**.
-9. **Память на `team-26-en`:** 3.8 GiB, swap нет. Здесь одновременно работают Prefect Server, runner и драйвер Spark (512 МБ). Не запускайте на этом узле ничего тяжёлого во время прогона.
-10. **Если `CREATE DATABASE` в Hive отказывает** (права или authorization), запустите flow с `hive_db=default`: БД создаваться не будет, таблица зарегистрируется в `default`.
+`hw5_check.sh` проверяет результат обработки после завершения Flow. Скрипт читает таблицу `team_prefect.apartments_stats` через Beeline и исходный CSV из HDFS.
 
+В Python повторяется очистка исходных данных и рассчитываются число сделок и средняя цена по группам `month, city, rooms`. Полученные значения сравниваются с таблицей Hive. Также проверяется совпадение списков партиций в исходных данных, Hive и HDFS.
 
+Запуск на `team-26-en` от пользователя `team`:
 
+```bash
+bash hw5_check.sh
+```
+
+При несовпадении данных или партиций скрипт завершается с ошибкой. Временные файлы выгрузки удаляются после проверки.
+
+## Результат проверки
+
+- таблица `team_prefect.apartments_stats` читается через Beeline;
+- число сделок и средняя цена совпадают с исходными данными во всех 180 группах;
+- после очистки — 4940 сделок;
+- в Hive и HDFS совпадают 9 партиций: `month=2026-01` ... `month=2026-09`.
+
+Вывод скрипта:
+
+```text
+Сделок после очистки в CSV: 4940 ; в Hive: 4940
+Групп в CSV: 180 ; в Hive: 180
+Партиций: ожидается 9 ; Hive 9 ; HDFS 9
+Проверка пройдена: Hive читает таблицу, данные и партиции совпадают
+```
